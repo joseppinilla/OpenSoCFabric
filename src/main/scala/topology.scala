@@ -145,6 +145,17 @@ class CMesh(parms: Parameters) extends Topology(parms) {
 		y.toVector
 	}
 
+	// This finds a free channel in a given connection array
+	// Connection arrays have as many items as channels, populated by 0 for unconnected and 1 for connected
+	def FindFreeChannel (x : Array[Int]) : Int = {
+	  for (i <- C until x.size) {
+		  if (x(i) != 1) {
+        return i //Returns 
+		  }
+		}
+	  return x.size //Returns array end
+	}
+	
 	// The router should use this after taking scala and then constructing hardware.
 	// def LiftCoord (x:Vector[Int]): Vec[UInt] = {
 	// 	Vec[UInt](x.map(x => UInt(x, width = AddressWidth)))
@@ -154,7 +165,8 @@ class CMesh(parms: Parameters) extends Topology(parms) {
 	// Not all routers are the same radix (this is a mesh), but the parameters we pass are the same. Synthesis should remove unconnected ports.
 	// TODO fix the above.
 	// println("numRouters: " + numRouters)
-	var connectionsMap = new HashMap[Vector[Int], Array[Int]]()
+	var connectionsInMap = new HashMap[Vector[Int], Array[Int]]()
+	var connectionsOutMap = new HashMap[Vector[Int], Array[Int]]()
 	var busProbesMap = new HashMap[Vector[Int], BusProbe]()
     var creditBufsMap = new HashMap[Vector[Int], CreditBuffer]()
 	for (n <- 0 until numRouters) {
@@ -173,7 +185,8 @@ class CMesh(parms: Parameters) extends Topology(parms) {
 		var newBusProbe = Chisel.Module( new BusProbe(parms.child("BusProbeParms", Map( ("routerRadix"->Soft(routerRadix)) )) ) ) 
         var newcreditBuf = Chisel.Module( new CreditBuffer(parms))
 		routermap += coord -> newRouter
-		connectionsMap += coord -> Array.fill(routerRadix)(0)
+		connectionsInMap += coord -> Array.fill(routerRadix)(0)
+		connectionsOutMap += coord -> Array.fill(routerRadix)(0)
 		busProbesMap += coord -> newBusProbe
         creditBufsMap += coord -> newcreditBuf
 		// Create the channels. Channels are indexed by the coordinates of the router that is feeding them flits (they are output channels for the router), and an integer with the port number.
@@ -199,8 +212,9 @@ class CMesh(parms: Parameters) extends Topology(parms) {
 
 				// channelmap += (channelcoord, newchannel) // For delay handling
 				println("Connecting router ", coord, "port ", i, " to consumer router ", consumerrouter, " port ", i, " router radix= ", routerRadix)
-				println("Settng ConnectionsMap for ", consumerrouter, " port ", i," to 1")
-				connectionsMap(consumerrouter)(i) = 1
+				println("Setting ConnectionsMap for ", consumerrouter, " port ", i," to 1")
+				connectionsInMap(consumerrouter)(i) = 1
+				connectionsOutMap(coord)(i) = 1
 			} else{
 				println("Leaving consumerrouter ", consumerrouter, " port ", i, " unconnected") 
 			}	
@@ -212,9 +226,10 @@ class CMesh(parms: Parameters) extends Topology(parms) {
 			println("Connecting router ", coord, "port ", p, " to injection queue ", p+ (n*C))
 			routermap(coord).io.inChannels(p) 	<> io.inChannels(p + (n*C))
 			println("Settng ConnectionsMap for ", coord, " port ", p," to 1")
-			connectionsMap(coord)(p) = 1
+			connectionsInMap(coord)(p) = 1
 			println("Connecting router ", coord, "port ", p, " to ejection queue ", p+(n*C))
 			io.outChannels(p + (n*C)) 				<> routermap(coord).io.outChannels(p)
+			connectionsOutMap(coord)(p) = 1
 		}
 		coord 					= IncrementCoord(coord)
 		io.cyclesRouterBusy(n)	:= busProbesMap(coord).io.cyclesRouterBusy
@@ -224,15 +239,17 @@ class CMesh(parms: Parameters) extends Topology(parms) {
 	for (n <- 0 until numRouters) {
 		for (i <- C until routerRadix) {
 			var consumerrouter = coord 
-			println("ConnectionsMap for: ", consumerrouter, " port ", i, " = ", connectionsMap(consumerrouter)(i))
-			if(connectionsMap(consumerrouter)(i) != 1){
+			println("ConnectionsMap for: ", consumerrouter, " port ", i, " = ", connectionsInMap(consumerrouter)(i))
+			if(connectionsInMap(consumerrouter)(i) != 1){
 				val NullEndpoint = Chisel.Module(new OpenSoC_ConstantEndpoint(parms.child("NullEndpoint", Map(
 												( "numInChannels"->Soft(routerRadix)),
 												( "numOutChannels"->Soft(routerRadix)) )) ) )
 				println("Null endpoint created")
 				routermap(consumerrouter).io.inChannels(i) <> NullEndpoint.io.outChannels(i)
-				NullEndpoint.io.inChannels(i) <> routermap(consumerrouter).io.outChannels(i)
-				connectionsMap(consumerrouter)(i) = 1
+				connectionsInMap(consumerrouter)(i) = 1
+				val freeOut = FindFreeChannel(connectionsOutMap(coord)) 
+				NullEndpoint.io.inChannels(freeOut) <> routermap(consumerrouter).io.outChannels(freeOut)
+				connectionsOutMap(consumerrouter)(freeOut) = 1
 			}
 		}
 		coord = IncrementCoord(coord)
@@ -294,6 +311,17 @@ class VCCMesh(parms: Parameters) extends VCTopology(parms) {
 		y.toVector
 	}
 
+	// This finds a free channel in a given connection array
+	// Connection arrays have as many items as channels, populated by 0 for unconnected and 1 for connected
+	def FindFreeChannel (x : Array[Int]) : Int = {
+	  for (i <- C until x.size) {
+		  if (x(i) != 1) {
+        return i //Returns 
+		  }
+		}
+	  return x.size //Returns array end
+	}
+	
 	// The router should use this after taking scala and then constructing hardware.
 	// def LiftCoord (x:Vector[Int]): Vec[UInt] = {
 	// 	Vec[UInt](x.map(x => UInt(x, width = AddressWidth)))
@@ -303,7 +331,8 @@ class VCCMesh(parms: Parameters) extends VCTopology(parms) {
 	// Not all routers are the same radix (this is a mesh), but the parameters we pass are the same. Synthesis should remove unconnected ports.
 	// TODO fix the above.
 	// println("numRouters: " + numRouters)
-	var connectionsMap = new HashMap[Vector[Int], Array[Int]]()
+	var connectionsInMap = new HashMap[Vector[Int], Array[Int]]()
+	var connectionsOutMap = new HashMap[Vector[Int], Array[Int]]()
 	var busProbesMap = new HashMap[Vector[Int], BusProbe]()
     var creditBufsMap = new HashMap[Vector[Int], CreditBuffer]()
 	for (n <- 0 until numRouters) {
@@ -322,7 +351,8 @@ class VCCMesh(parms: Parameters) extends VCTopology(parms) {
 		var newBusProbe = Chisel.Module( new BusProbe(parms.child("BusProbeParms", Map( ("routerRadix"->Soft(routerRadix)) )) ) ) 
         var newcreditBuf = Chisel.Module( new CreditBuffer(parms))
 		routermap += coord -> newRouter
-		connectionsMap += coord -> Array.fill(routerRadix)(0)
+		connectionsInMap += coord -> Array.fill(routerRadix)(0)
+		connectionsOutMap += coord -> Array.fill(routerRadix)(0)
 		busProbesMap += coord -> newBusProbe
         creditBufsMap += coord -> newcreditBuf
 		// Create the channels. Channels are indexed by the coordinates of the router that is feeding them flits (they are output channels for the router), and an integer with the port number.
@@ -348,8 +378,9 @@ class VCCMesh(parms: Parameters) extends VCTopology(parms) {
 
 				// channelmap += (channelcoord, newchannel) // For delay handling
 				println("Connecting router ", coord, "port ", i, " to consumer router ", consumerrouter, " port ", i, " router radix= ", routerRadix)
-				println("Settng ConnectionsMap for ", consumerrouter, " port ", i," to 1")
-				connectionsMap(consumerrouter)(i) = 1
+				println("Setting ConnectionsMap for ", consumerrouter, " port ", i," to 1")
+				connectionsInMap(consumerrouter)(i) = 1
+				connectionsOutMap(coord)(i) = 1
 			} else{
 				println("Leaving consumerrouter ", consumerrouter, " port ", i, " unconnected") 
 			}	
@@ -361,9 +392,10 @@ class VCCMesh(parms: Parameters) extends VCTopology(parms) {
 			println("Connecting router ", coord, "port ", p, " to injection queue ", p+ (n*C))
 			routermap(coord).io.inChannels(p) 	<> io.inChannels(p + (n*C))
 			println("Settng ConnectionsMap for ", coord, " port ", p," to 1")
-			connectionsMap(coord)(p) = 1
+			connectionsInMap(coord)(p) = 1
 			println("Connecting router ", coord, "port ", p, " to ejection queue ", p+(n*C))
 			io.outChannels(p + (n*C)) 				<> routermap(coord).io.outChannels(p)
+			connectionsOutMap(coord)(p) = 1
 		}
 		coord 					= IncrementCoord(coord)
 		io.cyclesRouterBusy(n)	:= busProbesMap(coord).io.cyclesRouterBusy
@@ -373,15 +405,17 @@ class VCCMesh(parms: Parameters) extends VCTopology(parms) {
 	for (n <- 0 until numRouters) {
 		for (i <- C until routerRadix) {
 			var consumerrouter = coord 
-			println("ConnectionsMap for: ", consumerrouter, " port ", i, " = ", connectionsMap(consumerrouter)(i))
-			if(connectionsMap(consumerrouter)(i) != 1){
+			println("ConnectionsMap for: ", consumerrouter, " port ", i, " = ", connectionsInMap(consumerrouter)(i))
+			if(connectionsInMap(consumerrouter)(i) != 1){
 				val NullEndpoint = Chisel.Module(new OpenSoC_VCConstantEndpoint(parms.child("NullEndpoint", Map(
 												( "numInChannels"->Soft(routerRadix)),
 												( "numOutChannels"->Soft(routerRadix)) )) ) )
 				println("Null endpoint created")
 				routermap(consumerrouter).io.inChannels(i) <> NullEndpoint.io.outChannels(i)
-				NullEndpoint.io.inChannels(i) <> routermap(consumerrouter).io.outChannels(i)
-				connectionsMap(consumerrouter)(i) = 1
+				connectionsInMap(consumerrouter)(i) = 1
+				val freeOut = FindFreeChannel(connectionsOutMap(coord)) 
+				NullEndpoint.io.inChannels(freeOut) <> routermap(consumerrouter).io.outChannels(freeOut)
+				connectionsOutMap(consumerrouter)(freeOut) = 1
 			}
 		}
 		coord = IncrementCoord(coord)
